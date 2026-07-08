@@ -12,7 +12,7 @@ import os
 
 # 设置路径
 DATA_DIR = "./data/processed"
-FIG_DIR = "./data/figures/data_analysis"
+FIG_DIR = "./figures/data_analysis"
 os.makedirs(FIG_DIR, exist_ok=True)
 
 # 设置中文字体
@@ -136,17 +136,6 @@ if '最终结局' in df.columns:
     plt.close()
     print("  05_分组对比.png ✅")
 
-# 3.6 品种对比
-if '牛只品种' in df.columns and '平均日增重' in df.columns:
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    sns.boxplot(data=df, x='牛只品种', y='初始体重', ax=axes[0], palette='Set3')
-    axes[0].set_title('不同品种初始体重')
-    sns.boxplot(data=df, x='牛只品种', y='平均日增重', ax=axes[1], palette='Set3')
-    axes[1].set_title('不同品种日增重')
-    plt.tight_layout()
-    plt.savefig(os.path.join(FIG_DIR, '06_品种对比.png'), dpi=150, bbox_inches='tight')
-    plt.close()
-    print("  06_品种对比.png ✅")
 
 # ============================================================
 # 4. 效率排行
@@ -193,10 +182,6 @@ if '精料转化率' in df.columns:
     m = df['精料转化率'].median()
     print(f"精料转化率中位数: {m:.4f}")
 
-if '牛只品种' in df.columns and '平均日增重' in df.columns:
-    best = df.groupby('牛只品种')['平均日增重'].mean().idxmax()
-    best_val = df.groupby('牛只品种')['平均日增重'].mean().max()
-    print(f"最优品种: {best} (日增重 {best_val:.3f} kg/天)")
 
 if '累计用药次数' in df.columns and '平均日增重' in df.columns:
     sick = df[df['累计用药次数'] > 0]['平均日增重'].mean()

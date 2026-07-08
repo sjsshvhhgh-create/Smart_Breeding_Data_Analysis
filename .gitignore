@@ -18,8 +18,13 @@ __pycache__/
 # 如果你之前决定将较小的样本数据直接上传到 GitHub 备份，请保持下面这行的注释（前面加 #）
 # 如果你未来数据变大了，或者数据包含敏感商业隐私，请取消下面的注释：
 # data/raw/
-# data/processed/
+data/processed/
+data/split/
 
 # 5. 忽略系统产生的临时文件
 .DS_Store
 Thumbs.db
+
+# 图片（可自己生成，不上传）
+figures/
+*.png

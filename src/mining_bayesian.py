@@ -27,7 +27,7 @@ import pymc as pm
 # 0. 设置与数据加载
 # ============================================================
 DATA_DIR = "./data/split"  # 修改为使用划分后的数据集
-FIG_DIR = "./data/figures/bayesian"
+FIG_DIR = "./figures/bayesian"
 os.makedirs(FIG_DIR, exist_ok=True)
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei']

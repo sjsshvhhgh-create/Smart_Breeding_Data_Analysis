@@ -21,7 +21,7 @@ from sklearn.preprocessing import StandardScaler
 # 0. 基础设置
 # ============================================================
 DATA_DIR = "./data/split"
-FIG_DIR = "./data/figures/regression"  # 回归模块单独目录
+FIG_DIR = "./figures/regression"  # 回归模块单独目录
 os.makedirs(FIG_DIR, exist_ok=True)
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei']
