@@ -1,36 +1,32 @@
 """
 贝叶斯参数估计（PyMC 5+ 现代版）：量化不确定性与风险置信区间
 ================================================
-数据源：使用划分好的 data/split/ 目录下的数据集
-方法：
-  1. Beta-Binomial MCMC → 结局概率分布 (Train)
-  2. Normal MCMC → 平均日增重估计 (Train)
-  3. 贝叶斯线性回归 → 影响因子分析 (Train 学习后验，Test 验证泛化能力)
-  4. 两组对比 → 重牛 vs 轻牛存活率差异 (Train)
-
-运行：python src/mining_bayesian.py
+v2 改进：
+1. 生长样本显式过滤 (has_growth + is_adg_outlier)
+2. 特征集与回归模块一致 (登记月龄、初始体重、累计用药/防疫次数)
+3. 存活率对比增加小样本提示
 """
 
 import os
 import warnings
 warnings.filterwarnings('ignore')
-os.environ['PYTENSOR_FLAGS'] = 'cxx='   
+os.environ['PYTENSOR_FLAGS'] = 'cxx='   # PyMC 5+ 要求
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns  
+import seaborn as sns
 import arviz as az
 import pymc as pm
 
 # ============================================================
 # 0. 设置与数据加载
 # ============================================================
-DATA_DIR = "./data/split"  # 修改为使用划分后的数据集
+DATA_DIR = "./data/split"
 FIG_DIR = "./figures/bayesian"
 os.makedirs(FIG_DIR, exist_ok=True)
 
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei']
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['figure.dpi'] = 120
 try:
@@ -39,13 +35,30 @@ except Exception:
     pass
 
 print(f"\n{'='*60}")
-print("🐮 贝叶斯参数估计（PyMC）— 量化不确定性 (基于划分数据集)")
+print("🐮 贝叶斯参数估计（PyMC）— 量化不确定性 (v2 对齐生长样本)")
 print(f"{'='*60}")
 
-# 分别加载训练集和测试集
 train_df = pd.read_csv(os.path.join(DATA_DIR, "train.csv"))
 test_df = pd.read_csv(os.path.join(DATA_DIR, "test.csv"))
-print(f"训练集用于推断后验 (Train): {len(train_df)} 头牛")
+
+# ----------------------------------------------------------
+# 生长样本过滤（与 regression 模块完全一致）
+# ----------------------------------------------------------
+def filter_growth(df, name):
+    before = len(df)
+    df = df[df['has_growth'] == True].copy()
+    after_has = len(df)
+    if 'is_adg_outlier' in df.columns:
+        df = df[df['is_adg_outlier'] == 0]
+    after_outlier = len(df)
+    print(f"  {name}: {before} → 有生长 {after_has} → 去异常 {after_outlier}")
+    return df
+
+print("\n📊 生长样本筛选:")
+train_df = filter_growth(train_df, "训练集")
+test_df  = filter_growth(test_df, "测试集")
+
+print(f"\n训练集用于推断后验 (Train): {len(train_df)} 头牛")
 print(f"测试集用于泛化验证 (Test) : {len(test_df)} 头牛\n")
 
 # MCMC 采样参数
@@ -74,7 +87,6 @@ if '最终结局' in train_df.columns:
 
     for outcome in outcomes:
         k = (train_df['最终结局'] == outcome).sum()
-
         with pm.Model() as beta_model:
             p = pm.Beta('p', alpha=1, beta=1)
             obs = pm.Binomial('obs', n=n_total, p=p, observed=k)
@@ -88,7 +100,8 @@ if '最终结局' in train_df.columns:
         print(f"      后验均值: {post_mean:.4f} ({post_mean*100:.2f}%)")
         print(f"      95% HDI:   [{post_hdi[0]:.4f}, {post_hdi[1]:.4f}]")
 
-        sns.kdeplot(x=p_samples, color=colors[outcome], linewidth=2, fill=True, alpha=0.2, ax=ax, label=f'{outcome} (均值={post_mean:.3f})')
+        sns.kdeplot(x=p_samples, color=colors[outcome], linewidth=2, fill=True, alpha=0.2,
+                    ax=ax, label=f'{outcome} (均值={post_mean:.3f})')
 
     ax.set_title('结局概率的后验分布 (训练集推断)')
     ax.set_xlabel('概率 p')
@@ -123,9 +136,8 @@ if '平均日增重' in train_df.columns:
     print(f"      后验均值: {mu_mean:.3f} kg/天")
     print(f"      95% HDI:   [{mu_hdi[0]:.3f}, {mu_hdi[1]:.3f}] kg/天")
 
-    # ---- 可视化 ----
+    # 可视化
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-
     sns.kdeplot(x=mu_samples, color='crimson', linewidth=2, fill=True, alpha=0.3, ax=axes[0])
     axes[0].axvline(adg_train.mean(), color='gray', linestyle='--', label=f'样本均值={adg_train.mean():.3f}')
     axes[0].set_title('平均日增重的后验分布')
@@ -135,18 +147,15 @@ if '平均日增重' in train_df.columns:
     with normal_model:
         ppc = pm.sample_posterior_predictive(trace, random_seed=42, progressbar=False)
     ppc_samples = ppc.posterior_predictive['obs'].values.flatten()
-    
     axes[1].hist(adg_train, bins=30, density=True, alpha=0.5, color='steelblue', label='实际观测(Train)')
     sns.kdeplot(x=ppc_samples, color='crimson', linewidth=2, fill=True, alpha=0.2, ax=axes[1], label='后验预测')
     axes[1].set_title('后验预测检验（模型拟合检查）')
     axes[1].set_xlabel('日增重 (kg/天)')
     axes[1].legend()
-
     plt.tight_layout()
     plt.savefig(os.path.join(FIG_DIR, 'bayes_02_日增重贝叶斯.png'), dpi=150, bbox_inches='tight')
     plt.close()
 
-    # ---- Trace 图 ----
     az.plot_trace(trace)
     fig = plt.gcf()
     fig.suptitle('MCMC 采样轨迹（诊断收敛性）', fontsize=12)
@@ -154,7 +163,6 @@ if '平均日增重' in train_df.columns:
     plt.savefig(os.path.join(FIG_DIR, 'bayes_02_trace_诊断.png'), dpi=150, bbox_inches='tight')
     plt.close()
     print("   📈 bayes_02_trace_诊断.png ✅")
-
 
 # ============================================================
 # 3. 贝叶斯线性回归：影响因子分析 (Train 学习, Test 验证)
@@ -164,16 +172,17 @@ print("3️⃣  贝叶斯线性回归：影响日增重的因子分析 (Train推
 print(f"{'─'*60}")
 
 if '平均日增重' in train_df.columns:
-    features = ['初始体重', '精料总量_kg', '累计防疫次数', '累计用药次数']
+    # 特征与回归模块完全一致
+    features = ['登记月龄', '初始体重', '累计用药次数', '累计防疫次数']
     existing_features = [f for f in features if f in train_df.columns]
 
     if len(existing_features) >= 2:
-        # 处理训练集
+        # 训练集
         train_valid = train_df[existing_features + ['平均日增重']].dropna()
         X_train = train_valid[existing_features].values
         y_train = train_valid['平均日增重'].values
 
-        # 训练集标准化参数
+        # 标准化
         X_mean = X_train.mean(axis=0)
         X_std = X_train.std(axis=0)
         X_std[X_std == 0] = 1
@@ -182,7 +191,7 @@ if '平均日增重' in train_df.columns:
         y_std = y_train.std()
         y_scaled = (y_train - y_mean) / y_std
 
-        # 在训练集上进行 MCMC 采样
+        # MCMC
         with pm.Model() as lm_model:
             alpha = pm.Normal('alpha', mu=0, sigma=1)
             betas = pm.Normal('beta', mu=0, sigma=1, shape=len(existing_features))
@@ -194,7 +203,7 @@ if '平均日增重' in train_df.columns:
         alpha_samples = get_samples(trace_lm, 'alpha')
         beta_samples = get_samples(trace_lm, 'beta')
 
-        # 还原回原始数据量纲
+        # 还原到原始量纲
         betas_original = beta_samples * y_std / X_std
         alpha_original = alpha_samples * y_std + y_mean - np.dot(betas_original, X_mean)
 
@@ -202,7 +211,8 @@ if '平均日增重' in train_df.columns:
         print(f"      {'─'*60}")
 
         fig, axes = plt.subplots(1, len(existing_features), figsize=(5*len(existing_features), 4))
-        if len(existing_features) == 1: axes = [axes]
+        if len(existing_features) == 1:
+            axes = [axes]
 
         for i, (feat, ax) in enumerate(zip(existing_features, axes)):
             b_samples = betas_original[:, i]
@@ -221,30 +231,27 @@ if '平均日增重' in train_df.columns:
         plt.savefig(os.path.join(FIG_DIR, 'bayes_03_回归系数后验.png'), dpi=150, bbox_inches='tight')
         plt.close()
         print(f"\n   📈 bayes_03_回归系数后验.png ✅")
-        
-        # 提取平均系数用于预测
+
+        # 预测评估
         beta_mean_final = betas_original.mean(axis=0)
         alpha_mean_final = alpha_original.mean()
 
-        # 计算训练集 R2
         y_pred_train = alpha_mean_final + np.dot(X_train, beta_mean_final)
         ss_res_train = ((y_train - y_pred_train) ** 2).sum()
         ss_tot_train = ((y_train - y_train.mean()) ** 2).sum()
         r2_train = 1 - ss_res_train / ss_tot_train
         print(f"      🎯 训练集 R² (In-sample): {r2_train:.4f}")
 
-        # 计算测试集 R2 (泛化评估)
+        # 测试集
         test_valid = test_df[existing_features + ['平均日增重']].dropna()
         X_test = test_valid[existing_features].values
         y_test = test_valid['平均日增重'].values
-        
         if len(y_test) > 0:
             y_pred_test = alpha_mean_final + np.dot(X_test, beta_mean_final)
             ss_res_test = ((y_test - y_pred_test) ** 2).sum()
             ss_tot_test = ((y_test - y_test.mean()) ** 2).sum()
             r2_test = 1 - ss_res_test / ss_tot_test
             print(f"      🛡️ 测试集 R² (Out-of-sample): {r2_test:.4f}")
-
 
 # ============================================================
 # 4. 两组对比：重牛 vs 轻牛存活率 (基于训练集)
@@ -259,6 +266,9 @@ if '初始体重' in train_df.columns and '最终结局' in train_df.columns:
 
     n_heavy, n_light = heavy.sum(), (~heavy).sum()
     survived_heavy, survived_light = (heavy & survived).sum(), (~heavy & survived).sum()
+    n_dead_train = (train_df['最终结局'] == '死亡').sum()
+
+    print(f"   训练集中死亡牛数: {n_dead_train}，结论受小样本影响较大，需谨慎解读。")
 
     with pm.Model() as compare_model:
         p_heavy = pm.Beta('p_heavy', alpha=2, beta=2)
@@ -294,4 +304,7 @@ if '初始体重' in train_df.columns and '最终结局' in train_df.columns:
     plt.savefig(os.path.join(FIG_DIR, 'bayes_04_两组存活率对比.png'), dpi=150, bbox_inches='tight')
     plt.close()
     print(f"\n   📈 bayes_04_两组存活率对比.png ✅")
-    print(f"\n{'='*60}\n✅ 贝叶斯分析彻底完成！请前往 data/figures/ 查看神仙级图表！")
+
+print(f"\n{'='*60}")
+print("✅ 贝叶斯分析完成！图表保存在 ./figures/bayesian/")
+print(f"{'='*60}")
